@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+    <!-- Since this file is changing a lot as you write it, tell the browser not to cache it. -->
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="-1" />
+    
+    <title>
+    Shaders
+    </title>
+    
+    <script src="js-util/jquery-2.1.1.min.js" type="text/javascript"></script>
+    <script src="js-util/html5slider.js" type="text/javascript"></script>
+    <script src="js-util/number-polyfill.min.js" type="text/javascript"></script>
+    <link rel='stylesheet' href='js-util/number-polyfill.css' />
+    <script src='js-util/spectrum/spectrum.js'></script>
+	<link rel='stylesheet' href='js-util/spectrum/spectrum.css' />
+    
+    <script src="gl-matrix.js" type="text/javascript"></script>
+    <script src="obj-utils.js" type="text/javascript"></script>
+    <script src="webgl-utils.js" type="text/javascript"></script>
+    <script src="more-webgl-utils.js" type="text/javascript"></script>
+    <script src="numeric-1.2.6.js" type="text/javascript"></script>
+
+<style type="text/css">
+body
+{
+    font-family: myriad, verdana, sans-serif;
+}
+
+/* http://stackoverflow.com/questions/7059039/how-to-prevent-accidental-select-drag-highlight-on-webpage-when-drawing-off-html */
+.not-draggable
+{
+  -moz-user-select: none;
+  -khtml-user-select: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#glcanvas
+{
+    border: 1px solid #000;
+}
+
+.control_group
+{
+    border-left: 1px dotted #000;
+    border-right: 1px dotted #000;
+    border-top: 1px dotted #000;
+    padding: 5px;
+}
+
+.control_group_last
+{
+    border-bottom: 1px dotted #000;
+}
+.picker
+{
+    float: left;
+    margin-right: 30px;
+    margin-bottom: 5px;
+}
+
+.clearfix
+{
+    clear: both;
+}
+
+.small-link
+{
+    text-decoration: underline;
+    font-size: 80%;
+    cursor: pointer;
+}
+</style>
+
+</head>
+<body>
+
+<div id="canvasholder">
+<canvas class="not-draggable" id="glcanvas" width="500" height="500"></canvas>
+
+<form id="render_variables" action="">
+<div class="control_group">
+OBJ file URL:<input type="text" name="obj_URL" value="data/head/head.obj" id="obj_URL" size=128 />
+<span class="small-link" for="obj_URL" href="data/head/head.obj">head</span>
+<span class="small-link" for="obj_URL" href="data/cube.obj">cube</span>
+<br />
+Normal map URL:<input type="text" name="normal_map_URL" value="data/head/normal-lowRes.png" id="normal_map_URL" size=128 />
+<span class="small-link" for="normal_map_URL" href="data/head/normal-lowRes.png">head</span>
+<span class="small-link" for="normal_map_URL" href="data/masonry-wall-normal-map.jpg">bricks</span>
+<br />
+Diffuse color map URL:<input type="text" name="diffuse_color_map_URL" value="data/head/lambertian.jpg" id="diffuse_color_map_URL" size=128 />
+<span class="small-link" for="diffuse_color_map_URL" href="data/head/lambertian.jpg">head</span>
+<span class="small-link" for="diffuse_color_map_URL" href="data/white.png">blank</span>
+</div>
+<div class="control_group">
+Drawing mode:
+<select name="drawing_mode" id="drawing_mode">
+<option value="position_is_color" selected="selected">Position is Color</option>
+<option value="colormap">Color Map</option>
+<option value="phong">Per-Pixel Phong with Diffuse Color Map</option>
+<option value="normalmap_tangent">Per-Pixel Phong with Diffuse Color Map and Normal Map (pre-computed tangent-space)</option>
+<option value="normalmap_notangent">Per-Pixel Phong with Diffuse Color Map and Normal Map (no pre-computed tangent-space)</option>
+</select>
+</div>
+<div class="control_group">
+Mouse:
+<label for="mouse_camera"><input type="radio" name="mouse_mode" value="mouse_camera" id="mouse_camera" checked="checked">Camera</label>
+<label for="mouse_light"><input type="radio" name="mouse_mode" value="mouse_light" id="mouse_light">Light</label>
+<br />
+<label for="light_autorotate"><input type="checkbox" name="light_autorotate" value="light_autorotate" id="light_autorotate" />Light Auto-rotate</label>
+<br />
+<label for="camera_autorotate"><input type="checkbox" name="camera_autorotate" value="camera_autorotate" id="camera_autorotate" />Camera Auto-rotate</label>
+<br />
+Field of view: <input type="range" id="camera_fov" name="camera_fov" min="1" max="90" step="0.1" value="20" />
+</div>
+<div class="control_group control_group_last">
+<div>
+<div class="picker">
+Ambient:
+<input type='text' id="ambient_colorpicker" name="ambient_colorpicker" value="#111111" />
+</div>
+<div class="picker">
+Diffuse:
+<input type='text' id="diffuse_colorpicker" name="diffuse_colorpicker" value="#ffffff" />
+</div>
+<div class="picker">
+Specular:
+<input type='text' id="specular_colorpicker" name="specular_colorpicker" value="#555555" />
+</div>
+<div class="picker">
+Shininess:
+<input type="number" id="shininess" name="shininess" min="1" max="50" step="0.1" value="10" />
+<input type="range" id="shininess_slider" name="shininess_slider" min="1" max="50" step="0.1" value="10" />
+</div>
+</div>
+<div class="clearfix"></div>
+</div>
+</form>
+
+</div>
+
+<script type='text/javascript'>
+"use strict";
+
+$(document).ready( function() {
+    ///
+    /// Global variables.
+    ///
+    // The canvas DOM object.
+    var canvas;
+    // The WebGL context object.
+    var gl;
+    
+    // The parsed OBJ.
+    var mesh;
+    
+    // The diffuse color map as an Image.
+    var diffuse_color_map;
+    // The diffuse color map gl texture object.
+    var diffuse_color_map_tex;
+    // The normal map as an image.
+    var normal_map;
+    // The normal map gl texture object.
+    var normal_map_tex;
+    
+    // The field-of-view (radians).
+    var fov = 20*Math.PI/180.;
+    // The near and far planes
+    // (the eye is at z = 10 and objects are normalized to lie within [-1..1]).
+    var near_far = [ 8, 12 ];
+    // The world-space xyz position of the eye.
+    var eye_pos = [ 0, 0, 10 ];
+    // The world-space xyz position of the light.
+    var light_pos = [ 0, 0, 3 ];
+    // The rotation of the camera in radians.
+    var camera_radians = 0;
+    // The axis of rotation of the camera.
+    var camera_axis = [ 0, 1, 0 ];
+    // The number of second per camera revolution (when auto-rotate camera is checked).
+    var kSecondsPerCameraRevolution = 4;
+    // The number of second per light revolution (when auto-rotate light is checked).
+    var kSecondsPerLightRevolution = 4;
+    
+    ///
+    /// Global functions.
+    ///
+    /*
+    Each drawing mode sets these global draw() and cleanup() functions.
+    The draw() function is called once per frame.
+    The cleanup() function is called once before switching to a new mode;
+    use it to free WebGL objects (buffers and shaders) that are no longer needed.
+    */
+    var draw = function() {};
+    var cleanup = function() {};
+    
+    var last_frame_time;
+    function draw_callback()
+    {
+        requestAnimationFrame( draw_callback );
+        
+        var current_frame_time = now();
+        if( last_frame_time === undefined ) last_frame_time = current_frame_time;
+        
+        if( $("#camera_autorotate").is(':checked') )
+        {
+            camera_radians += (current_frame_time-last_frame_time)*2*Math.PI/kSecondsPerCameraRevolution;
+        }
+        if( $("#light_autorotate").is(':checked') )
+        {
+            var rot = mat4.create();
+            mat4.identity( rot );
+            mat4.rotate( rot, rot, (current_frame_time-last_frame_time)*2*Math.PI/kSecondsPerLightRevolution, [ 0, 1, 0 ] );
+            vec3.transformMat4( light_pos, light_pos, rot );
+        }
+        
+        last_frame_time = current_frame_time;
+        
+        draw();
+    }
+    
+    /*
+    Sets up a drawing mode where the color of a pixel is its xyz position.
+    */
+    function setup_draw_position_is_color()
+    {
+        /// 1 Attach the shaders.
+        /// 2 Get locations of uniforms.
+        /// 3 Setup the buffers.
+        /// 4 Setup extra variables (such as one-time global GL state) in anticipation of calling draw.
+        /// 5 Set the global draw function to our drawing function.
+        /// 6 Set the global cleanup function which is called when someone switches drawing modes.
+        
+        /// 1
+        var shader = {};
+        {
+            var shader_setup = setup_shader_program_from_vertex_shader_id_and_fragment_shader_id( gl, "color-shader-vs", "color-shader-fs" );
+            shader.program = shader_setup[0];
+            shader.vertex = shader_setup[1];
+            shader.fragment = shader_setup[2];
+        }
+        
+        /// 2
+        shader.uPMatrix = gl.getUniformLocation( shader.program, "uPMatrix" );
+        shader.uMVMatrix = gl.getUniformLocation( shader.program, "uMVMatrix" );
+        
+        
+        /// 3
+        var meshBuffers = OBJUtils.create_gl_buffers_from_parsed_OBJ( gl, mesh, { 'vertex': ['positions'], 'faceVertexIndices': ['positions'] } );
+        var attribBufferLocs = OBJUtils.attach_parsed_OBJ_gl_buffers_to_shader_vertex_attributes( gl, mesh, meshBuffers, shader.program, { "aVertexPosition": "positions" } );
+        
+        
+        /// 4
+        gl.clearColor( 0.0, 0.0, 0.0, 1.0 );
+        gl.enable( gl.DEPTH_TEST );
+        
+        /// 5
+        draw = function() {
+            gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+            
+            // Setup the perspective matrix (this could be moved to the one-time
+            // initialization function if the canvas were a constant size).
+            var pMatrix = mat4.create();
+            mat4.perspective( pMatrix, fov, canvas.width / canvas.height, near_far[0], near_far[1] );
+            gl.uniformMatrix4fv( shader.uPMatrix, false, pMatrix );
+            
+            // Set the modelview matrix.
+            var mvMatrix = mat4.create();
+            mat4.identity( mvMatrix );
+            mat4.translate( mvMatrix, mvMatrix, [ -eye_pos[0], -eye_pos[1], -eye_pos[2] ] );
+            mat4.rotate( mvMatrix, mvMatrix, camera_radians, camera_axis );
+            gl.uniformMatrix4fv( shader.uMVMatrix, false, mvMatrix );
+            
+            // The call to bindBuffers could be moved to the one-time initialization function,
+            // since we only use one buffer.
+            gl.bindBuffer( gl.ELEMENT_ARRAY_BUFFER, meshBuffers.faceVertexIndices.positions );
+            gl.drawElements( gl.TRIANGLES, mesh.faceVertexIndices.positions.length*mesh.faceVertexIndices.positions[0].length, gl.UNSIGNED_SHORT, 0 );
+            };
+        
+        /// 6
+        cleanup = function() {
+            for( var attrib in attribBufferLocs ) gl.disableVertexAttribArray( attribBufferLocs[ attrib ] );
+            
+            cleanup_shader_program_and_shaders( gl, shader.program, [ shader.vertex, shader.fragment ] );
+            
+            for( var key in meshBuffers.vertex ) gl.deleteBuffer( meshBuffers.vertex[key] );
+            for( var key in meshBuffers.faceVertexIndices ) gl.deleteBuffer( meshBuffers.faceVertexIndices[key] );
+            };
+    }
+    /*
+    Sets up a drawing mode where the color of a pixel is its texture value.
+    */
+    function setup_draw_colormap()
+    {
+        /// 1 Attach the shaders.
+        /// 2 Get locations of uniforms.
+        /// 3 Setup the buffers.
+        /// 4 Setup extra variables (such as one-time global GL state) in anticipation of calling draw.
+        /// 5 Set the global draw function to our drawing function.
+        /// 6 Set the global cleanup function which is called when someone switches drawing modes.
+        
+        /// 1
+        var shader = {};
+        {
+            var shader_setup = setup_shader_program_from_vertex_shader_id_and_fragment_shader_id( gl, "colormap-shader-vs", "colormap-shader-fs" );
+            shader.program = shader_setup[0];
+            shader.vertex = shader_setup[1];
+            shader.fragment = shader_setup[2];
+        }
+        
+        /// 2
+        shader.uPMatrix = gl.getUniformLocation( shader.program, "uPMatrix" );
+        shader.uMVMatrix = gl.getUniformLocation( shader.program, "uMVMatrix" );
+        shader.uSampler = gl.getUniformLocation( shader.program, "uSampler" );
+        
+        
+        /// 3
+        // Flatten the mesh for gl.DrawArrays, in case the mesh has
+        // faceVertexIndices.texCoords which differ from the faceVertexIndices.positions.
+        var flatmesh = OBJUtils.flatten_parsed_OBJ( mesh );
+        var meshBuffers = OBJUtils.create_gl_buffers_from_parsed_OBJ( gl, flatmesh );
+        var attribBufferLocs = OBJUtils.attach_parsed_OBJ_gl_buffers_to_shader_vertex_attributes( gl, flatmesh, meshBuffers, shader.program, { "aVertexPosition": "positions", "aVertexUV": "texCoords" } );
+        
+        
+        /// 4
+        gl.clearColor( 0.0, 0.0, 0.0, 1.0 );
+        gl.enable( gl.DEPTH_TEST );
+        
+        /// 5
+        draw = function() {
+            gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+            
+            // Setup the perspective matrix (this could be moved to the one-time
+            // initialization function if the canvas were a constant size).
+            var pMatrix = mat4.create();
+            mat4.perspective( pMatrix, fov, canvas.width / canvas.height, near_far[0], near_far[1] );
+            gl.uniformMatrix4fv( shader.uPMatrix, false, pMatrix );
+            
+            // Set the modelview matrix.
+            var mvMatrix = mat4.create();
+            mat4.identity( mvMatrix );
+            mat4.translate( mvMatrix, mvMatrix, [ -eye_pos[0], -eye_pos[1], -eye_pos[2] ] );
+			
+            mat4.rotate( mvMatrix, mvMatrix, camera_radians, camera_axis );
+            gl.uniformMatrix4fv( shader.uMVMatrix, false, mvMatrix );
+			
+            // Set the texture.
+            gl.activeTexture( gl.TEXTURE0 + 0 /* 0 as in texture unit 0 */ );
+            gl.bindTexture( gl.TEXTURE_2D, diffuse_color_map_tex );
+            gl.uniform1i( shader.uSampler, 0 /* 0 as in texture unit 0 */ );
+            
+            gl.drawArrays( gl.TRIANGLES, 0, flatmesh.vertex.positions.length );
+            };
+        
+        /// 6
+        cleanup = function() {
+            for( var attrib in attribBufferLocs ) gl.disableVertexAttribArray( attribBufferLocs[ attrib ] );
+            
+            cleanup_shader_program_and_shaders( gl, shader.program, [ shader.vertex, shader.fragment ] );
+            
+            for( var key in meshBuffers.vertex ) gl.deleteBuffer( meshBuffers.vertex[key] );
+            for( var key in meshBuffers.faceVertexIndices ) gl.deleteBuffer( meshBuffers.faceVertexIndices[key] );
+            };
+    }
+    /*
+    Sets up a drawing mode where the color of a pixel is its texture value.
+    */
+    function setup_draw_phong()
+    {
+        // Your code goes here.
+		console.log("in phong");
+		var shader = {};
+        {
+            var shader_setup = setup_shader_program_from_vertex_shader_id_and_fragment_shader_id( gl, "phong-shader-vs", "phong-shader-fs");
+            shader.program = shader_setup[0];
+            shader.vertex = shader_setup[1];
+            shader.fragment = shader_setup[2];
+        }
+        
+        /// 2
+        shader.uPMatrix = gl.getUniformLocation( shader.program, "uPMatrix" );
+        shader.uMVMatrix = gl.getUniformLocation( shader.program, "uMVMatrix" );
+        shader.uSampler = gl.getUniformLocation( shader.program, "uSampler" );
+        shader.uMVMatrix_inv_trans = gl.getUniformLocation( shader.program, "uMVMatrix_inv_trans" );
+		shader.uEye_light_pos = gl.getUniformLocation( shader.program, "uEye_light_pos" );
+		shader.uAmbient = gl.getUniformLocation( shader.program, "uAmbient" );
+		shader.uDiffuse = gl.getUniformLocation( shader.program, "uDiffuse" );
+        shader.uSpecular = gl.getUniformLocation( shader.program, "uSpecular" );
+		shader.uShininess = gl.getUniformLocation( shader.program, "uShininess" );
+		
+        /// 3
+        // Flatten the mesh for gl.DrawArrays, in case the mesh has
+        // faceVertexIndices.texCoords which differ from the faceVertexIndices.positions.
+		if( !( 'normals' in mesh ) ) 
+			OBJUtils.insert_per_vertex_normals_to_parsed_OBJ( mesh );
+        var flatmesh = OBJUtils.flatten_parsed_OBJ( mesh );
+        var meshBuffers = OBJUtils.create_gl_buffers_from_parsed_OBJ( gl, flatmesh );
+        var attribBufferLocs = OBJUtils.attach_parsed_OBJ_gl_buffers_to_shader_vertex_attributes( gl, flatmesh, meshBuffers, shader.program, { "aVertexPosition": "positions", "aVertexUV": "texCoords", "aVertexNormal": "normals" } );
+        
+        /// 4
+        gl.clearColor( 0.0, 0.0, 0.0, 1.0 );
+        gl.enable( gl.DEPTH_TEST );
+        
+        /// 5    
+        draw = function() { 
+			gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT ); 
+			
+			// Setup the perspective matrix (this could be moved to the one-time
+            // initialization function if the canvas were a constant size).
+            var pMatrix = mat4.create();
+            mat4.perspective( pMatrix, fov, canvas.width / canvas.height, near_far[0], near_far[1] );
+            gl.uniformMatrix4fv( shader.uPMatrix, false, pMatrix );
+            
+            // Set the modelview matrix.
+            var mvMatrix = mat4.create();
+			var mvMatrix_inv = mat4.create();
+			var mvMatrix_inv_trans = mat4.create();
+            mat4.identity( mvMatrix );
+            mat4.translate( mvMatrix, mvMatrix, [ -eye_pos[0], -eye_pos[1], -eye_pos[2] ] );
+			mat4.rotate( mvMatrix, mvMatrix, camera_radians, camera_axis );
+			gl.uniformMatrix4fv( shader.uMVMatrix, false, mvMatrix );
+			
+			//uniform for inverse transpose
+			mat4.invert(mvMatrix_inv, mvMatrix);
+			mat4.transpose(mvMatrix_inv_trans, mvMatrix_inv);
+			gl.uniformMatrix4fv( shader.uMVMatrix_inv_trans, false, mvMatrix_inv_trans );
+			
+			//uniform for light position
+			var eye_light_pos = [];
+			vec3.transformMat4( eye_light_pos, light_pos, mvMatrix);
+			gl.uniform3fv( shader.uEye_light_pos, eye_light_pos );
+			
+			//uniform for light and shining
+			gl.uniform3fv(shader.uAmbient, hex2rgb3fv( $("#ambient_colorpicker").val() ));
+			gl.uniform3fv(shader.uDiffuse, hex2rgb3fv( $("#diffuse_colorpicker").val() ));
+			gl.uniform3fv(shader.uSpecular, hex2rgb3fv( $("#specular_colorpicker").val() ));
+			gl.uniform1f(shader.uShininess, $("#shininess").val());
+			
+			gl.activeTexture( gl.TEXTURE0 + 0 /* 0 as in texture unit 0 */ );
+            gl.bindTexture( gl.TEXTURE_2D, diffuse_color_map_tex );
+            gl.uniform1i( shader.uSampler, 0 /* 0 as in texture unit 0 */ );
+			
+			gl.drawArrays( gl.TRIANGLES, 0, flatmesh.vertex.positions.length );
+            };
+        
+			
+        /// 6
+			cleanup = function() {
+            for( var attrib in attribBufferLocs ) gl.disableVertexAttribArray( attribBufferLocs[ attrib ] );
+            
+            cleanup_shader_program_and_shaders( gl, shader.program, [ shader.vertex, shader.fragment ] );
+            
+            for( var key in meshBuffers.vertex ) gl.deleteBuffer( meshBuffers.vertex[key] );
+            for( var key in meshBuffers.faceVertexIndices ) gl.deleteBuffer( meshBuffers.faceVertexIndices[key] );
+            };
+    }
+
+	
+    /*
+    Sets up a drawing mode where the color of a pixel is determined
+    by performing lighting using its normal map,
+    using a pre-computed the tangent space.
+    */
+    function setup_draw_normalmap_tangent()
+    {
+		       // Your code goes here.
+		console.log("in phong");
+		var shader = {};
+        {
+            var shader_setup = setup_shader_program_from_vertex_shader_id_and_fragment_shader_id( gl, "normalmap-tangent-shader-vs", "normalmap-tangent-shader-fs");
+            shader.program = shader_setup[0];
+            shader.vertex = shader_setup[1];
+            shader.fragment = shader_setup[2];
+        }
+        
+        /// 2
+        shader.uPMatrix = gl.getUniformLocation( shader.program, "uPMatrix" );
+        shader.uMVMatrix = gl.getUniformLocation( shader.program, "uMVMatrix" );
+        //shader.uSampler = gl.getUniformLocation( shader.program, "uSampler" );
+		shader.uSampler_diffuse = gl.getUniformLocation( shader.program, "uSampler_diffuse" );
+		shader.uSampler_normal = gl.getUniformLocation( shader.program, "uSampler_normal" );
+        shader.uMVMatrix_inv_trans = gl.getUniformLocation( shader.program, "uMVMatrix_inv_trans" );
+		shader.uEye_light_pos = gl.getUniformLocation( shader.program, "uEye_light_pos" );
+		shader.uAmbient = gl.getUniformLocation( shader.program, "uAmbient" );
+		shader.uDiffuse = gl.getUniformLocation( shader.program, "uDiffuse" );
+        shader.uSpecular = gl.getUniformLocation( shader.program, "uSpecular" );
+		shader.uShininess = gl.getUniformLocation( shader.program, "uShininess" );
+		
+        /// 3
+        // Flatten the mesh for gl.DrawArrays, in case the mesh has
+        // faceVertexIndices.texCoords which differ from the faceVertexIndices.positions.
+		if( !( 'normals' in mesh ) ) 
+			OBJUtils.insert_per_vertex_normals_to_parsed_OBJ( mesh );
+		if(!('tangents' in mesh))
+			OBJUtils.insert_per_vertex_tangents_to_parsed_OBJ( mesh );
+        var flatmesh = OBJUtils.flatten_parsed_OBJ( mesh );
+        var meshBuffers = OBJUtils.create_gl_buffers_from_parsed_OBJ( gl, flatmesh );
+        var attribBufferLocs = OBJUtils.attach_parsed_OBJ_gl_buffers_to_shader_vertex_attributes( gl, flatmesh, meshBuffers, shader.program, { "aVertexPosition": "positions", "aVertexUV": "texCoords", "aVertexNormal": "normals", "aVertexTangent": "tangents", "aVertexBitangent": "bitangents" } );
+        
+        /// 4
+        gl.clearColor( 0.0, 0.0, 0.0, 1.0 );
+        gl.enable( gl.DEPTH_TEST );
+        
+        /// 5    
+        draw = function() { 
+			gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT ); 
+			
+			// Setup the perspective matrix (this could be moved to the one-time
+            // initialization function if the canvas were a constant size).
+            var pMatrix = mat4.create();
+            mat4.perspective( pMatrix, fov, canvas.width / canvas.height, near_far[0], near_far[1] );
+            gl.uniformMatrix4fv( shader.uPMatrix, false, pMatrix );
+            
+            // Set the modelview matrix.
+            var mvMatrix = mat4.create();
+			var mvMatrix_inv = mat4.create();
+			var mvMatrix_inv_trans = mat4.create();
+            mat4.identity( mvMatrix );
+            mat4.translate( mvMatrix, mvMatrix, [ -eye_pos[0], -eye_pos[1], -eye_pos[2] ] );
+			mat4.rotate( mvMatrix, mvMatrix, camera_radians, camera_axis );
+			gl.uniformMatrix4fv( shader.uMVMatrix, false, mvMatrix );
+			
+			//uniform for inverse transpose
+			mat4.invert(mvMatrix_inv, mvMatrix);
+			mat4.transpose(mvMatrix_inv_trans, mvMatrix_inv);
+			gl.uniformMatrix4fv( shader.uMVMatrix_inv_trans, false, mvMatrix_inv_trans );
+			
+			//uniform for light position
+			var eye_light_pos = [];
+			vec3.transformMat4( eye_light_pos, light_pos, mvMatrix);
+			gl.uniform3fv( shader.uEye_light_pos, eye_light_pos );
+			
+			//uniform for light and shining
+			gl.uniform3fv(shader.uAmbient, hex2rgb3fv( $("#ambient_colorpicker").val() ));
+			gl.uniform3fv(shader.uDiffuse, hex2rgb3fv( $("#diffuse_colorpicker").val() ));
+			gl.uniform3fv(shader.uSpecular, hex2rgb3fv( $("#specular_colorpicker").val() ));
+			gl.uniform1f(shader.uShininess, $("#shininess").val());
+			
+			gl.activeTexture( gl.TEXTURE0 + 0 /* 0 as in texture unit 0 */ );
+            gl.bindTexture( gl.TEXTURE_2D, diffuse_color_map_tex );
+            gl.uniform1i( shader.uSampler_diffuse, 0 /* 0 as in texture unit 0 */ );
+			
+			gl.activeTexture( gl.TEXTURE0 + 1 /* 0 as in texture unit 0 */ );
+            gl.bindTexture( gl.TEXTURE_2D, normal_map_tex );
+            gl.uniform1i( shader.uSampler_normal, 1 /* 0 as in texture unit 0 */ );
+			
+			gl.drawArrays( gl.TRIANGLES, 0, flatmesh.vertex.positions.length );
+            };
+        
+			
+        /// 6
+			cleanup = function() {
+            for( var attrib in attribBufferLocs ) gl.disableVertexAttribArray( attribBufferLocs[ attrib ] );
+            
+            cleanup_shader_program_and_shaders( gl, shader.program, [ shader.vertex, shader.fragment ] );
+            
+            for( var key in meshBuffers.vertex ) gl.deleteBuffer( meshBuffers.vertex[key] );
+            for( var key in meshBuffers.faceVertexIndices ) gl.deleteBuffer( meshBuffers.faceVertexIndices[key] );
+            };
+ 
+    }
+    /*
+    Sets up a drawing mode where the color of a pixel is determined
+    by performing lighting using its normal map,
+    without pre-computing the tangent space.
+    */
+    function setup_draw_normalmap_notangent()
+    {
+        // We want the widely supported WebGL extension for dFdx and dFdx.
+        var derivative_extension = gl.getExtension( 'OES_standard_derivatives' );
+		
+		console.log("in phong");
+		var shader = {};
+        {
+            var shader_setup = setup_shader_program_from_vertex_shader_id_and_fragment_shader_id( gl, "phong-shader-vs", "normalmap-notangent-shader-fs");
+            shader.program = shader_setup[0];
+            shader.vertex = shader_setup[1];
+            shader.fragment = shader_setup[2];
+        }
+        
+        /// 2
+        shader.uPMatrix = gl.getUniformLocation( shader.program, "uPMatrix" );
+        shader.uMVMatrix = gl.getUniformLocation( shader.program, "uMVMatrix" );
+        shader.uSampler_diffuse = gl.getUniformLocation( shader.program, "uSampler_diffuse" );
+		shader.uSampler_normal = gl.getUniformLocation( shader.program, "uSampler_normal" );
+		//shader.uTex = gl.getUniformLocation( shader.program, "uTex" );
+        shader.uMVMatrix_inv_trans = gl.getUniformLocation( shader.program, "uMVMatrix_inv_trans" );
+		shader.uEye_light_pos = gl.getUniformLocation( shader.program, "uEye_light_pos" );
+		shader.uAmbient = gl.getUniformLocation( shader.program, "uAmbient" );
+		shader.uDiffuse = gl.getUniformLocation( shader.program, "uDiffuse" );
+        shader.uSpecular = gl.getUniformLocation( shader.program, "uSpecular" );
+		shader.uShininess = gl.getUniformLocation( shader.program, "uShininess" );
+		
+        /// 3
+        // Flatten the mesh for gl.DrawArrays, in case the mesh has
+        // faceVertexIndices.texCoords which differ from the faceVertexIndices.positions.
+		if( !( 'normals' in mesh ) ) 
+			OBJUtils.insert_per_vertex_normals_to_parsed_OBJ( mesh );
+        var flatmesh = OBJUtils.flatten_parsed_OBJ( mesh );
+        var meshBuffers = OBJUtils.create_gl_buffers_from_parsed_OBJ( gl, flatmesh );
+        var attribBufferLocs = OBJUtils.attach_parsed_OBJ_gl_buffers_to_shader_vertex_attributes( gl, flatmesh, meshBuffers, shader.program, { "aVertexPosition": "positions", "aVertexUV": "texCoords", "aVertexNormal": "normals" } );
+        
+        /// 4
+        gl.clearColor( 0.0, 0.0, 0.0, 1.0 );
+        gl.enable( gl.DEPTH_TEST );
+        
+        /// 5    
+        draw = function() { 
+			gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT ); 
+			
+			// Setup the perspective matrix (this could be moved to the one-time
+            // initialization function if the canvas were a constant size).
+            var pMatrix = mat4.create();
+            mat4.perspective( pMatrix, fov, canvas.width / canvas.height, near_far[0], near_far[1] );
+            gl.uniformMatrix4fv( shader.uPMatrix, false, pMatrix );
+            
+            // Set the modelview matrix.
+            var mvMatrix = mat4.create();
+			var mvMatrix_inv = mat4.create();
+			var mvMatrix_inv_trans = mat4.create();
+            mat4.identity( mvMatrix );
+            mat4.translate( mvMatrix, mvMatrix, [ -eye_pos[0], -eye_pos[1], -eye_pos[2] ] );
+			mat4.rotate( mvMatrix, mvMatrix, camera_radians, camera_axis );
+			gl.uniformMatrix4fv( shader.uMVMatrix, false, mvMatrix );
+			
+			//uniform for inverse transpose
+			mat4.invert(mvMatrix_inv, mvMatrix);
+			mat4.transpose(mvMatrix_inv_trans, mvMatrix_inv);
+			gl.uniformMatrix4fv( shader.uMVMatrix_inv_trans, false, mvMatrix_inv_trans );
+			
+			//uniform for light position
+			var eye_light_pos = [];
+			vec3.transformMat4( eye_light_pos, light_pos, mvMatrix);
+			gl.uniform3fv( shader.uEye_light_pos, eye_light_pos );
+			
+			//uniform for light and shining
+			gl.uniform3fv(shader.uAmbient, hex2rgb3fv( $("#ambient_colorpicker").val() ));
+			gl.uniform3fv(shader.uDiffuse, hex2rgb3fv( $("#diffuse_colorpicker").val() ));
+			gl.uniform3fv(shader.uSpecular, hex2rgb3fv( $("#specular_colorpicker").val() ));
+			gl.uniform1f(shader.uShininess, $("#shininess").val());
+			
+			gl.activeTexture( gl.TEXTURE0 + 0 /* 0 as in texture unit 0 */ );
+            gl.bindTexture( gl.TEXTURE_2D, diffuse_color_map_tex );
+            gl.uniform1i( shader.uSampler_diffuse, 0 /* 0 as in texture unit 0 */ );
+			
+			gl.activeTexture( gl.TEXTURE0 + 1 /* 0 as in texture unit 0 */ );
+            gl.bindTexture( gl.TEXTURE_2D, normal_map_tex );
+            gl.uniform1i( shader.uSampler_normal, 1 /* 0 as in texture unit 0 */ );
+			
+			
+			gl.drawArrays( gl.TRIANGLES, 0, flatmesh.vertex.positions.length );
+            };
+        
+			
+        /// 6
+			cleanup = function() {
+            for( var attrib in attribBufferLocs ) gl.disableVertexAttribArray( attribBufferLocs[ attrib ] );
+            
+            cleanup_shader_program_and_shaders( gl, shader.program, [ shader.vertex, shader.fragment ] );
+            
+            for( var key in meshBuffers.vertex ) gl.deleteBuffer( meshBuffers.vertex[key] );
+            for( var key in meshBuffers.faceVertexIndices ) gl.deleteBuffer( meshBuffers.faceVertexIndices[key] );
+            };
+    }
+    
+    
+    ///
+    /// Initialization code.
+    ///
+    
+    // While developing, let's ask jQuery not to cache any resources
+    // in case we're editing them.
+    $.ajaxSetup({cache: false});
+    
+    // Load the WebGL canvas
+    {
+        canvas = document.getElementById("glcanvas");
+        set_canvas_to_css_width_and_height( canvas, canvas.width, canvas.height );
+        gl = WebGLUtils.setupWebGL( canvas );
+        gl.viewport( 0, 0, canvas.width, canvas.height );
+        
+        diffuse_color_map_tex = gl.createTexture();
+        gl.bindTexture( gl.TEXTURE_2D, diffuse_color_map_tex );
+        gl.pixelStorei( gl.UNPACK_FLIP_Y_WEBGL, true );
+        gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR );
+        gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE );
+        gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE );
+        
+        normal_map_tex = gl.createTexture();
+        gl.bindTexture( gl.TEXTURE_2D, normal_map_tex );
+        gl.pixelStorei( gl.UNPACK_FLIP_Y_WEBGL, true );
+        gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR );
+        gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE );
+        gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE );
+    }
+    
+    // Setup event handlers.
+    {
+        $("#drawing_mode").change( function() {
+            function switch_to( setup )
+            {
+                cleanup();
+                setup();
+                draw_callback();
+            }
+            
+            var drawing_mode = $("#drawing_mode option:selected").val();
+            if( drawing_mode == "position_is_color" ) switch_to( setup_draw_position_is_color );
+            else if( drawing_mode == "colormap" ) switch_to( setup_draw_colormap );
+            else if( drawing_mode == "phong" ) switch_to( setup_draw_phong );
+            else if( drawing_mode == "normalmap_tangent" ) switch_to( setup_draw_normalmap_tangent );
+            else if( drawing_mode == "normalmap_notangent" ) switch_to( setup_draw_normalmap_notangent );
+            else
+            {
+                alert( "Unsupported drawing mode: " + drawing_mode );
+                // TODO: Set it back to the previous mode.
+            }
+            } );
+        
+        $( "#camera_fov" ).on( 'input', function() {
+            // Convert from degrees to radians.
+            fov = $(this).val() * Math.PI/180.;
+            });
+        // Initialize it to the value in the global variable (converting from radians to degrees).
+        $( "#camera_fov" ).val( fov*180./Math.PI );
+        
+        $( "#ambient_colorpicker" ).spectrum({
+            showButtons: false,
+            preferredFormat: "hex",
+            color: $( "#ambient_colorpicker" ).val(),
+            move: function(color) {
+                $(this).val( color.toHexString() );
+                // console.log( "ambient " + color.toHexString() );
+                }
+            });
+        $( "#diffuse_colorpicker" ).spectrum({
+            showButtons: false,
+            preferredFormat: "hex",
+            color: $( "#diffuse_colorpicker" ).val(),
+            move: function(color) {
+                $(this).val( color.toHexString() );
+                // console.log( "diffuse " + color.toHexString() );
+                }
+            });
+        $( "#specular_colorpicker" ).spectrum({
+            showButtons: false,
+            preferredFormat: "hex",
+            color: $( "#specular_colorpicker" ).val(),
+            move: function(color) {
+                $(this).val( color.toHexString() );
+                // console.log( "specular " + color.toHexString() );
+                }
+            });
+        
+        $( "#shininess" ).change( function() {
+            var val = $(this).val();
+            // console.log( "shininess " + val );
+            });
+        $( "#shininess_slider" ).on( 'input', function() {
+            // http://stackoverflow.com/questions/3179385/val-doesnt-trigger-change-in-jquery
+            $( "#shininess" ).val( $(this).val() ).change();
+            // console.log( "shininess slider " + $(this).val() );
+            });
+        
+        $( "#obj_URL" ).change( function() {
+            var url = $(this).val();
+            $.get( url, function( data ) {
+                mesh = OBJUtils.parse_OBJ_text( data );
+                OBJUtils.normalize_parsed_OBJ( mesh );
+                // console.log( mesh );
+                
+                // Trigger a drawing mode change:
+                $("#drawing_mode").change();
+                } );
+            } );
+        $( "#obj_URL" ).change();
+        
+        diffuse_color_map = new Image();
+        diffuse_color_map.onload = function() {
+            gl.bindTexture( gl.TEXTURE_2D, diffuse_color_map_tex );
+            gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, this );
+            };
+        $( "#diffuse_color_map_URL" ).change( function() {
+            diffuse_color_map.src = $(this).val();
+            // console.log( diffuse_color_map.src );
+            } );
+        $( "#diffuse_color_map_URL" ).change();
+        
+        normal_map = new Image();
+        normal_map.onload = function() {
+            gl.bindTexture( gl.TEXTURE_2D, normal_map_tex );
+            gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, this );
+            };
+        $( "#normal_map_URL" ).change( function() {
+            normal_map.src = $(this).val();
+            // console.log( normal_map.src );
+            } );
+        $( "#normal_map_URL" ).change();
+        
+        $( ".small-link" ).on( 'click', function( evt ) { $( '#' + $(this).attr('for') ).val( $(this).attr('href') ).change(); } );
+    }
+    
+    function setup_mouse_handlers()
+    {
+        function mouse_dragged( evt )
+        {
+            var glcanvas = this;
+            var xy = event_xy_in_container( evt, glcanvas );
+            
+            // Turn xy into a fraction of the width and height.
+            var devicePixelRatio = window.devicePixelRatio || 1;
+            xy[0] = devicePixelRatio * xy[0] / glcanvas.width;
+            xy[1] = devicePixelRatio * xy[1] / glcanvas.height;
+            xy[0] = 2.*xy[0] - 1.;
+            xy[1] = 2.*xy[1] - 1.;
+            
+            if( $("#mouse_camera").is(':checked') )
+            {
+                camera_radians = Math.PI * xy[0];
+            }
+            else if( $("#mouse_light").is(':checked') )
+            {
+                // Don't do this; the modelview matrix could be different
+                // for different drawing functions.
+                // TODO Q: Really?  I doubt it.
+                /*
+                // Set the modelview matrix.
+                var mvMatrix = mat4.create();
+                mat4.identity( mvMatrix );
+                mat4.translate( mvMatrix, mvMatrix, [ -eye_pos[0], -eye_pos[1], -eye_pos[2] ] );
+                mat4.rotate( mvMatrix, mvMatrix, camera_radians, camera_axis );
+                
+                var mvInverse = mat3.create();
+                mat3.fromMat4( mvInverse, mvMatrix );
+                mat3.invert( mvInverse, mvInverse );
+                
+                var right = vec3.fromValues( 1,0,0 );
+                var up = vec3.fromValues( 0,-1,0 );
+                vec3.transformMat3( right, right, mvInverse );
+                vec3.transformMat3( up, up, mvInverse );
+                */
+                var right = vec3.fromValues( 1,0,0 );
+                var up = vec3.fromValues( 0,-1,0 );
+                
+                var light = vec3.fromValues( 0, 0, 3 );
+                vec3.scale( right, right, 3*xy[0] );
+                vec3.scale( up, up, 3*xy[1] );
+                
+                vec3.add( light, light, right );
+                vec3.add( light, light, up );
+                
+                light_pos = [ light[0], light[1], light[2] ];
+            }
+        }
+        $( '#glcanvas' ).mousedown( function( evt ) {
+            // Continue dragging on mousemove.
+            $(this).mousemove( mouse_dragged );
+            // Stop dragging on mouseup (which must be on the window, not the element).
+            $(window).mouseup( function( evt ) {
+                // Stop drawing on mouseup.
+                $('#glcanvas').off( 'mousemove' );
+                $(window).off( 'mouseup' );
+                } );
+            
+            // Now forward the event by calling mouse_changed()
+            // with the correct 'this' parameter.
+            mouse_dragged.call( this, evt );
+            } );
+    }
+    setup_mouse_handlers();
+} );
+</script>
+
+<script id="color-shader-vs" type="x-shader/x-vertex">
+// The variable naming scheme is prefixing
+// an 'a' for attributes, 'v' for varying, and 'u' for uniform.
+attribute vec3 aVertexPosition;
+
+varying vec3 vPos;
+
+uniform mat4 uMVMatrix;
+uniform mat4 uPMatrix;
+
+void main( void )
+{
+    vPos = aVertexPosition;
+    gl_Position = uPMatrix * uMVMatrix * vec4( aVertexPosition, 1.0 );
+}
+</script>
+<script id="color-shader-fs" type="x-shader/x-fragment">
+precision mediump float;
+
+// The variable naming scheme is prefixing
+// an 'a' for attributes, 'v' for varying, and 'u' for uniform.
+varying vec3 vPos;
+
+void main( void )
+{
+    vec3 cpos = .5 + .5 * vPos;
+    gl_FragColor = vec4( cpos, 1.0 );
+}
+</script>
+
+<script id="colormap-shader-vs" type="x-shader/x-vertex">
+// The variable naming scheme is prefixing
+// an 'a' for attributes, 'v' for varying, and 'u' for uniform.
+attribute vec3 aVertexPosition;
+attribute vec2 aVertexUV;
+
+varying vec2 vUV;
+
+uniform mat4 uMVMatrix;
+uniform mat4 uPMatrix;
+
+void main( void )
+{
+    vUV = aVertexUV;
+    gl_Position = uPMatrix * uMVMatrix * vec4( aVertexPosition, 1.0 );
+}
+</script>
+<script id="colormap-shader-fs" type="x-shader/x-fragment">
+precision mediump float;
+
+// The variable naming scheme is prefixing
+// an 'a' for attributes, 'v' for varying, and 'u' for uniform.
+varying vec2 vUV;
+
+uniform sampler2D uSampler;
+
+void main( void )
+{
+   gl_FragColor = texture2D( uSampler, vec2( vUV.s, vUV.t ) );
+}
+</script>
+
+<script id="phong-shader-vs" type="x-shader/x-vertex">
+// Your code goes here.
+attribute vec3 aVertexPosition;
+attribute vec2 aVertexUV;
+attribute vec3 aVertexNormal;
+
+varying vec2 vUV;
+varying vec3 normal;
+varying vec3 vertPos;
+
+
+uniform mat4 uMVMatrix;
+uniform mat4 uPMatrix;
+uniform mat4 uMVMatrix_inv_trans;
+
+
+void main( void )
+{
+    vUV = aVertexUV;
+    gl_Position = uPMatrix * uMVMatrix * vec4( aVertexPosition, 1.0 );
+	//vertex normal
+	normal = vec3(uMVMatrix_inv_trans * vec4(aVertexNormal, 0.0));
+	//position
+	vertPos = vec3(uMVMatrix * vec4(aVertexPosition, 1.0));
+}
+
+</script>
+<script id="phong-shader-fs" type="x-shader/x-fragment">
+// Your code goes here.
+precision mediump float;
+
+// The variable naming scheme is prefixing
+// an 'a' for attributes, 'v' for varying, and 'u' for uniform.
+varying vec2 vUV;
+varying vec3 vertPos;
+varying vec3 normal;
+
+uniform sampler2D uSampler;
+uniform vec3 uEye_light_pos;
+uniform vec3 uAmbient;
+uniform vec3 uDiffuse;
+uniform vec3 uSpecular;
+uniform float uShininess;
+
+void main( void )
+{
+    vec4 color  = texture2D( uSampler, vec2( vUV.s, vUV.t ) );
+	vec3 n = normalize(normal);
+	vec3 lightDir = normalize(uEye_light_pos - vertPos);
+    vec3 reflectDir = reflect(-lightDir, n);
+	vec3 reflectDir_n = normalize(reflectDir);
+    vec3 viewDir = normalize(-vertPos);
+	float dd = dot(lightDir,n);
+	float sd = dot(reflectDir, viewDir);
+	
+	float specular = 0.0;
+	vec3 diffuse = vec3(0.0,0.0,0.0);
+	if(dd > 0.0){ 
+		specular = pow(sd, uShininess);
+		diffuse = dd*uDiffuse;
+	}
+	if(sd > 0.0){
+		specular = pow(sd, uShininess);
+	}
+	gl_FragColor = color * vec4( uAmbient + diffuse + specular*uSpecular, 1.0);
+	
+}
+
+</script>
+
+<script id="normalmap-tangent-shader-vs" type="x-shader/x-vertex">
+// Your code goes here.
+attribute vec3 aVertexPosition;
+attribute vec2 aVertexUV;
+attribute vec3 aVertexTangent;
+attribute vec3 aVertexBitangent;
+attribute vec3 aVertexNormal;
+
+varying vec2 vUV;
+varying vec3 vertPos;
+varying vec3 vtangent;
+varying vec3 vbitangent;
+varying vec3 normal;
+
+uniform mat4 uMVMatrix;
+uniform mat4 uPMatrix;
+uniform mat4 uMVMatrix_inv_trans;
+
+void main( void )
+{
+    vUV = aVertexUV;
+    gl_Position = uPMatrix * uMVMatrix * vec4( aVertexPosition, 1.0 );
+	vertPos = vec3(uMVMatrix * vec4(aVertexPosition, 1.0));
+    normal = vec3(uMVMatrix_inv_trans * vec4(aVertexNormal, 0.0));
+	vtangent = aVertexTangent ;
+	vbitangent = aVertexBitangent; 
+}
+</script>
+<script id="normalmap-tangent-shader-fs" type="x-shader/x-fragment">
+// Your code goes here.
+precision mediump float;
+
+// The variable naming scheme is prefixing
+// an 'a' for attributes, 'v' for varying, and 'u' for uniform.
+varying vec2 vUV;
+varying vec3 vertPos;
+varying vec3 vtangent;
+varying vec3 vbitangent;
+varying vec3 normal;
+
+uniform sampler2D uSampler_diffuse;
+uniform sampler2D uSampler_normal;
+uniform vec3 uEye_light_pos;
+uniform vec3 uAmbient;
+uniform vec3 uDiffuse;
+uniform vec3 uSpecular;
+uniform float uShininess;
+
+void main( void )
+{
+	vec4 color  = texture2D( uSampler_diffuse, vec2( vUV.s, vUV.t ) );
+	vec3 normal_dir = normalize(texture2D( uSampler_normal, vUV ).rgb*2.0-1.0);
+	normalize(vtangent);
+	normalize(vbitangent);
+	normalize(normal);
+	//TBN
+	mat3 mv_tangent_temp = mat3(vtangent, vbitangent, normal);
+	mat3 mv_tangent = mat3(1.0);
+
+	mv_tangent[0][0] = mv_tangent_temp[0][0]; mv_tangent[1][0] = mv_tangent_temp[0][1] ; mv_tangent[2][0] = mv_tangent_temp[0][2];
+	mv_tangent[0][1] = mv_tangent_temp[1][0]; mv_tangent[1][1] = mv_tangent_temp[1][1] ; mv_tangent[2][1] = mv_tangent_temp[1][2];
+	mv_tangent[0][2] = mv_tangent_temp[2][0]; mv_tangent[1][2] = mv_tangent_temp[2][1] ; mv_tangent[2][2] = mv_tangent_temp[2][2];
+	//change normal to world coord
+	vec3 n = mv_tangent*normal_dir;
+	
+	vec3 lightDir = normalize(uEye_light_pos - vertPos);
+    vec3 reflectDir = reflect(-lightDir, n);
+	vec3 reflectDir_n = normalize(reflectDir);
+    vec3 viewDir = normalize(-vertPos);
+	
+	float dd = dot(lightDir,n);
+	float sd = dot(reflectDir_n, viewDir);
+	
+	float specular = 0.0;
+	vec3 diffuse = vec3(0.0,0.0,0.0);
+	
+	if(dd > 0.0){ 
+		specular = pow(sd, uShininess);
+		diffuse = dd*uDiffuse;
+	}
+	if(sd > 0.0){
+		specular = pow(sd, uShininess);
+	}
+	gl_FragColor = color*vec4( uAmbient + diffuse + specular*uSpecular, 1.0);
+
+}
+
+
+
+</script>
+
+<script id="normalmap-notangent-shader-fs" type="x-shader/x-fragment">
+#extension GL_OES_standard_derivatives : require
+
+// Your code goes here.
+precision mediump float;
+
+// The variable naming scheme is prefixing
+// an 'a' for attributes, 'v' for varying, and 'u' for uniform.
+varying vec2 vUV;
+varying vec3 vertPos;
+varying vec3 normal;
+
+uniform sampler2D uSampler_diffuse;
+uniform sampler2D uSampler_normal;
+uniform vec3 uEye_light_pos;
+uniform vec3 uAmbient;
+uniform vec3 uDiffuse;
+uniform vec3 uSpecular;
+uniform float uShininess;
+
+void main( void )
+{
+    vec4 color  = texture2D( uSampler_diffuse, vec2( vUV.st ) );
+
+	//2*2 UV matrix
+	mat2 tex = mat2(dFdx(vUV.s), dFdy(vUV.s), dFdx(vUV.t), dFdy(vUV.t));
+	mat2 tex_inv_temp = mat2(dFdy(vUV.t), -dFdy(vUV.s), -dFdx(vUV.t), dFdx(vUV.s));
+	float det = 1.0/(dFdx(vUV.s)*dFdy(vUV.t) - dFdy(vUV.s)* dFdx(vUV.t));
+	//inv matrix
+	mat2 tex_inv = det*tex_inv_temp ;
+	//tangents and bitangents
+	vec3 tangents = vec3(0.0);
+	vec3 bitangents = vec3(0.0);
+	
+	tangents[0] = dFdx(vertPos[0])*tex_inv[0][0] + dFdy(vertPos[0])*tex_inv[1][0]; tangents[1] = dFdx(vertPos[1])*tex_inv[0][0] + dFdy(vertPos[1])*tex_inv[1][0]; tangents[2] = dFdx(vertPos[2])*tex_inv[0][0] + dFdy(vertPos[2])*tex_inv[1][0];
+	bitangents[0] = dFdx(vertPos[0])*tex_inv[0][1] + dFdy(vertPos[0])*tex_inv[1][1]; bitangents[1] = dFdx(vertPos[1])*tex_inv[0][1] + dFdy(vertPos[1])*tex_inv[1][1]; bitangents[2] = dFdx(vertPos[2])*tex_inv[0][1] + dFdy(vertPos[2])*tex_inv[1][1];
+	
+	tangents = normalize(tangents); bitangents = normalize(bitangents); normalize(normal);
+	
+	mat3 mv_tangent_temp = mat3(tangents, bitangents, normal);
+	//TBN matrix 
+	mat3 mv_tangent = mat3(1.0);
+	mv_tangent[0][0] = mv_tangent_temp[0][0]; mv_tangent[1][0] = mv_tangent_temp[0][1] ; mv_tangent[2][0] = mv_tangent_temp[0][2];
+	mv_tangent[0][1] = mv_tangent_temp[1][0]; mv_tangent[1][1] = mv_tangent_temp[1][1] ; mv_tangent[2][1] = mv_tangent_temp[1][2];
+	mv_tangent[0][2] = mv_tangent_temp[2][0]; mv_tangent[1][2] = mv_tangent_temp[2][1] ; mv_tangent[2][2] = mv_tangent_temp[2][2];
+	
+	vec3 normal_dir = normalize(texture2D( uSampler_normal, vUV ).rgb*2.0-1.0);
+	vec3 n = mv_tangent*normal_dir;
+	
+	vec3 lightDir = normalize(uEye_light_pos - vertPos);
+    vec3 reflectDir = reflect(-lightDir, n);
+	vec3 reflectDir_n = normalize(reflectDir);
+    vec3 viewDir = normalize(-vertPos);
+	float dd = dot(lightDir,n);
+	float sd = dot(reflectDir, viewDir);
+	
+	float specular = 0.0;
+	vec3 diffuse = vec3(0.0,0.0,0.0);
+	if(dd > 0.0){ 
+		specular = pow(sd, uShininess);
+		diffuse = dd*uDiffuse;
+	}
+	if(sd > 0.0){
+		specular = pow(sd, uShininess);
+	}
+	gl_FragColor = color * vec4( uAmbient + diffuse + specular*uSpecular, 1.0);
+}
+
+</script>
+
+
+</body>
+</html>
